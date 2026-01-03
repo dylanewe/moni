@@ -16,7 +16,19 @@ type CategoryStore struct {
 
 type categoryMap map[string]int64
 
-func (s *CategoryStore) Insert(context.Context, *Category) error
+func (s *CategoryStore) Insert(ctx context.Context, cat *Category) error {
+	query := `INSERT INTO categories (id, name) VALUES ($1, $2)`
+
+	ctx, cancel := context.WithTimeout(ctx, 10)
+	defer cancel()
+
+	_, err := s.db.ExecContext(ctx, query, cat.ID, cat.Name)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
 
 func (s *CategoryStore) GetAll(context.Context) ([]Category, error)
 

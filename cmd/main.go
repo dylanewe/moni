@@ -7,7 +7,13 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/dylanewe/moni/internal/config"
+	"github.com/dylanewe/moni/internal/db"
+	service "github.com/dylanewe/moni/internal/services"
+	"github.com/dylanewe/moni/internal/store"
 	"github.com/dylanewe/moni/internal/tui"
+	"github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/option"
 )
 
 const (
@@ -29,7 +35,7 @@ type model struct {
 	secondListValues []string
 }
 
-func initModel() model {
+func initModel(cfg config.Config, service service.Service, store store.Store) model {
 	return model{
 		stateDescription: "Initializing...",
 		commands: []command{
@@ -121,7 +127,23 @@ func renderLists(doc *strings.Builder, m model) {
 }
 
 func main() {
-	p := tea.NewProgram(initModel())
+	cfg, err := config.GetConfig("../config.toml")
+	if err != nil {
+		log.Fatalf("get config error: %v", err)
+	}
+
+	db, err := db.New(cfg.DB.Address)
+	if err != nil {
+		log.Fatalf("db connection error: %v", err)
+	}
+	defer db.Close()
+
+	store := store.NewStore(db)
+
+	llmClient := openai.NewClient(option.WithAPIKey(cfg.LLM.APIKey))
+	service := service.NewService(&llmClient)
+
+	p := tea.NewProgram(initModel(cfg, service, store))
 	if _, err := p.Run(); err != nil {
 		log.Fatalf("TUI run error: %v", err)
 	}

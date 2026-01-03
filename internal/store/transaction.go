@@ -8,11 +8,11 @@ import (
 )
 
 type Transaction struct {
-	ID           int64
-	Description  string
-	CategoryName string
-	Amount       float64
-	Date         string
+	ID           int64   `json:"-"`
+	Description  string  `json:"description"`
+	CategoryName string  `json:"category"`
+	Amount       float64 `json:"amount"`
+	Date         string  `json:"date"`
 }
 
 type TransactionStore struct {
