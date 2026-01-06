@@ -19,7 +19,7 @@ type TransactionStore struct {
 	db *sql.DB
 }
 
-func (s *TransactionStore) Insert(ctx context.Context, tx *sql.Tx, transactions []Transaction) error {
+func (s *TransactionStore) Insert(ctx context.Context, transactions []Transaction) error {
 	return withTx(s.db, ctx, func(tx *sql.Tx) error {
 		categoryMap, err := getCategoryMap(ctx, tx)
 		if err != nil {

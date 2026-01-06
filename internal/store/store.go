@@ -7,7 +7,7 @@ import (
 
 type Store struct {
 	Transactions interface {
-		Insert(context.Context, *sql.Tx, []Transaction) error
+		Insert(context.Context, []Transaction) error
 		GetIncomeByDate(ctx context.Context, startDate, endDate string) (float64, error)
 		GetExpenseByDate(ctx context.Context, startDate, endDate string) (float64, error)
 	}

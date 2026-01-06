@@ -60,7 +60,7 @@ DOCUMENT TEXT:
 
 	chatCompletion, err := s.client.Chat.Completions.New(context.TODO(), openai.ChatCompletionNewParams{
 		Messages: []openai.ChatCompletionMessageParamUnion{
-			openai.UserMessage(prompt),
+			openai.SystemMessage(prompt),
 			openai.UserMessage(parsedData),
 		},
 		Model:       openai.ChatModelGPT4oMini,

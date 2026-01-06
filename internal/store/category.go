@@ -30,7 +30,30 @@ func (s *CategoryStore) Insert(ctx context.Context, cat *Category) error {
 	return nil
 }
 
-func (s *CategoryStore) GetAll(context.Context) ([]Category, error)
+func (s *CategoryStore) GetAll(ctx context.Context) ([]Category, error) {
+	query := `SELECT id, name FROM categories`
+
+	ctx, cancel := context.WithTimeout(ctx, 10)
+	defer cancel()
+
+	rows, err := s.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var categories []Category
+	for rows.Next() {
+		var cat Category
+		if err := rows.Scan(&cat.ID, &cat.Name); err != nil {
+			return nil, err
+		}
+
+		categories = append(categories, cat)
+	}
+
+	return categories, rows.Err()
+}
 
 func getCategoryMap(ctx context.Context, tx *sql.Tx) (categoryMap, error) {
 	query := `SELECT id, name FROM categories`
