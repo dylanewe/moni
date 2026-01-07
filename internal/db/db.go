@@ -43,7 +43,7 @@ type ExtractStatementMsg struct {
 	Err          error
 }
 
-func ExtractStatement(llmParser *service.LLMParserService, cat []string, file string) tea.Cmd {
+func ExtractStatement(llmParser service.StatementParser, cat []string, file string) tea.Cmd {
 	return func() tea.Msg {
 		tx, err := llmParser.ParseStatement(context.TODO(), cat, file)
 		if err != nil {

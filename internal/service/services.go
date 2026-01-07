@@ -7,10 +7,12 @@ import (
 	"github.com/openai/openai-go/v3"
 )
 
+type StatementParser interface {
+	ParseStatement(ctx context.Context, categories []string, filepath string) ([]store.Transaction, error)
+}
+
 type Service struct {
-	LLMParser interface {
-		ParseStatement(ctx context.Context, categories []string, filepath string) ([]store.Transaction, error)
-	}
+	LLMParser StatementParser
 }
 
 func NewService(client *openai.Client) Service {
