@@ -17,7 +17,7 @@ type DBConnectionMsg struct {
 	Err   error
 }
 
-func Init(addr string) tea.Cmd {
+func Init(addr string, categories []string) tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.TODO()
 		db, err := sql.Open("pgx", addr)
@@ -61,9 +61,9 @@ type AddStatementMsg struct {
 	Err error
 }
 
-func AddStatement(txStore *store.TransactionStore, tx []store.Transaction) tea.Cmd {
+func AddStatement(txStore *store.Store, tx []store.Transaction) tea.Cmd {
 	return func() tea.Msg {
-		if err := txStore.Insert(context.TODO(), tx); err != nil {
+		if err := txStore.Transactions.Insert(context.TODO(), tx); err != nil {
 			return AddStatementMsg{Err: fmt.Errorf("failed to insert transactions: %v", err)}
 		}
 		return AddStatementMsg{Err: nil}

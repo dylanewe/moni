@@ -82,6 +82,10 @@ DOCUMENT TEXT:
 		return nil, err
 	}
 
+	for _, tx := range transactions {
+		tx.CategoryName = strings.ToLower(tx.CategoryName)
+	}
+
 	return transactions, nil
 }
 

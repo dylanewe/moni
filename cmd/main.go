@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -15,7 +16,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("get config error: %v", err)
 	}
-
+	fmt.Print(cfg.Categories)
 	llmClient := openai.NewClient(option.WithAPIKey(cfg.LLM.APIKey))
 	service := service.NewService(&llmClient)
 

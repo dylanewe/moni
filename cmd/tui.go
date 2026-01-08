@@ -37,22 +37,25 @@ type command struct {
 }
 
 type model struct {
-	stateDescription string
-	stateStatus      tui.StatusBarState
-	commands         []command
-	cursor           int
-	secondListHeader string
-	secondListValues []string
-	db               *db.DBConnectionMsg
-	store            *store.Store
-	service          *service.Service
-	cfg              *config.Config
-	loading          bool
-	spinner          spinner.Model
-	fileStatements   []string
-	fileCursor       int
-	mode             mode
-	extractedTx      *db.ExtractStatementMsg
+	stateDescription    string
+	stateStatus         tui.StatusBarState
+	commands            []command
+	cursor              int
+	secondListHeader    string
+	secondListValues    []string
+	db                  *db.DBConnectionMsg
+	store               *store.Store
+	service             *service.Service
+	cfg                 *config.Config
+	loading             bool
+	spinner             spinner.Model
+	fileStatements      []string
+	fileCursor          int
+	mode                mode
+	extractedTx         *db.ExtractStatementMsg
+	txCursor            int
+	uncategorizedTx     []*store.Transaction
+	uncategorizedCursor int
 }
 
 func initModel(cfg *config.Config, service *service.Service) model {
@@ -79,7 +82,7 @@ func initModel(cfg *config.Config, service *service.Service) model {
 func (m model) Init() tea.Cmd {
 	addr := m.cfg.DB.Address
 	return tea.Batch(
-		db.Init(addr),
+		db.Init(addr, m.cfg.Categories),
 		m.spinner.Tick,
 	)
 }
@@ -112,14 +115,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.mode = modeDefault
 			} else {
 				transactions := m.extractedTx.Transactions
-				var uncategorizedTx []store.Transaction
-				for _, tx := range transactions {
+				for i := range transactions {
+					tx := &transactions[i]
 					if !slices.Contains(m.cfg.Categories, tx.CategoryName) {
-						uncategorizedTx = append(uncategorizedTx, tx)
+						m.uncategorizedTx = append(m.uncategorizedTx, tx)
 					}
 				}
 
-				if len(uncategorizedTx) > 0 {
+				if len(m.uncategorizedTx) > 0 {
+					m.uncategorizedCursor = 0
 					m.stateDescription = "Categorize these transactions"
 					m.stateStatus = tui.StatusBarStateBlue
 					m.mode = modeCategorize
@@ -132,6 +136,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.loading = false
+		return m, nil
+
+	case db.AddStatementMsg:
+		if msg.Err != nil {
+			m.stateStatus = tui.StatusBarStateRed
+			m.stateDescription = shortenErr(msg.Err, 50)
+		} else {
+			m.stateStatus = tui.StatusBarStateGreen
+			m.stateDescription = "Successfully added transactions!"
+		}
+		m.loading = false
+		m.mode = modeDefault
 		return m, nil
 
 	case tea.KeyMsg:
@@ -147,6 +163,38 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.loading = true
 				return m, db.ExtractStatement(m.service.LLMParser, m.cfg.Categories, filepath)
 			}
+
+			if m.mode == modeSaving {
+				m.stateDescription = "Saving..."
+				m.stateStatus = tui.StatusBarStateYellow
+				m.mode = modeLoading
+				m.loading = true
+				return m, db.AddStatement(m.store, m.extractedTx.Transactions)
+			}
+
+			if m.mode == modeCategorize {
+				currentTx := m.uncategorizedTx[m.uncategorizedCursor]
+				selectedCategory := m.cfg.Categories[m.txCursor]
+				currentTx.CategoryName = selectedCategory
+				if m.uncategorizedCursor < len(m.uncategorizedTx)-1 {
+					m.uncategorizedCursor++
+					m.txCursor = 0
+				} else {
+					m.stateDescription = "Confirm to add these transactions?"
+					m.stateStatus = tui.StatusBarStateBlue
+					m.mode = modeSaving
+				}
+				return m, nil
+			}
+
+			if m.mode == modeSaving {
+				m.stateDescription = "Saving..."
+				m.stateStatus = tui.StatusBarStateYellow
+				m.mode = modeLoading
+				m.loading = true
+				return m, db.AddStatement(m.store, m.extractedTx.Transactions)
+			}
+
 			if m.cursor == 1 {
 				statements, err := util.ReadFilesFromFolder("../statements/", []string{".pdf"})
 				if err != nil {
@@ -177,6 +225,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.fileCursor > 0 {
 					m.fileCursor--
 				}
+			} else if m.mode == modeCategorize {
+				if m.txCursor > 0 {
+					m.txCursor--
+				}
 			} else {
 				if m.cursor > 0 {
 					if m.commands[m.cursor-1].disabled {
@@ -191,6 +243,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.fileCursor < len(m.fileStatements)-1 {
 					m.fileCursor++
 				}
+			} else if m.mode == modeCategorize {
+				if m.txCursor < len(m.cfg.Categories) {
+					m.txCursor++
+				}
 			} else {
 				if m.cursor < len(m.commands)-1 {
 					if m.commands[m.cursor+1].disabled {
@@ -198,6 +254,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					m.cursor++
 				}
+			}
+
+		case "y":
+			if m.mode == modeSaving {
+				m.stateDescription = "Saving..."
+				m.stateStatus = tui.StatusBarStateYellow
+				m.mode = modeLoading
+				m.loading = true
+				return m, db.AddStatement(m.store, m.extractedTx.Transactions)
 			}
 		}
 	}
@@ -244,10 +309,21 @@ func renderLists(doc *strings.Builder, m model) {
 		})
 	}
 
-	leftList := tui.RenderListCommands(doc, &tui.ListProps{
-		Items:    items,
-		Selected: m.cursor,
-	})
+	var leftList string
+	if m.mode == modeCategorize {
+		currentTx := m.uncategorizedTx[m.uncategorizedCursor]
+		txDetails := []tui.Item{
+			{Value: fmt.Sprintf("Date: %s", currentTx.Date)},
+			{Value: fmt.Sprintf("Desc: %s", currentTx.Description)},
+			{Value: fmt.Sprintf("Amount: %.2f", currentTx.Amount)},
+		}
+		leftList = tui.RenderListCommands(doc, &tui.ListProps{Items: txDetails})
+	} else {
+		leftList = tui.RenderListCommands(doc, &tui.ListProps{
+			Items:    items,
+			Selected: m.cursor,
+		})
+	}
 
 	var rightList string
 	if m.mode == modeFilePicker {
@@ -260,6 +336,16 @@ func renderLists(doc *strings.Builder, m model) {
 			}
 		}
 		rightList = tui.RenderListDisplay("Statements", fileList)
+	} else if m.mode == modeCategorize {
+		var catList []string
+		for i, c := range m.cfg.Categories {
+			if i == m.txCursor {
+				catList = append(catList, fmt.Sprintf("[x] %s", c))
+			} else {
+				catList = append(catList, fmt.Sprintf("[ ] %s", c))
+			}
+		}
+		rightList = tui.RenderListDisplay("Categories", catList)
 	} else {
 		rightList = tui.RenderListDisplay(m.secondListHeader, m.secondListValues)
 	}
