@@ -19,10 +19,7 @@ type categoryMap map[string]int64
 func (s *CategoryStore) Insert(ctx context.Context, cat *Category) error {
 	query := `INSERT INTO categories (id, name) VALUES ($1, $2)`
 
-	ctx, cancel := context.WithTimeout(ctx, 10)
-	defer cancel()
-
-	_, err := s.db.ExecContext(ctx, query, cat.ID, cat.Name)
+_, err := s.db.ExecContext(ctx, query, cat.ID, cat.Name)
 	if err != nil {
 		return err
 	}
@@ -33,10 +30,7 @@ func (s *CategoryStore) Insert(ctx context.Context, cat *Category) error {
 func (s *CategoryStore) GetAll(ctx context.Context) ([]Category, error) {
 	query := `SELECT id, name FROM categories`
 
-	ctx, cancel := context.WithTimeout(ctx, 10)
-	defer cancel()
-
-	rows, err := s.db.QueryContext(ctx, query)
+rows, err := s.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -58,10 +52,7 @@ func (s *CategoryStore) GetAll(ctx context.Context) ([]Category, error) {
 func getCategoryMap(ctx context.Context, tx *sql.Tx) (categoryMap, error) {
 	query := `SELECT id, name FROM categories`
 
-	ctx, cancel := context.WithTimeout(ctx, 10)
-	defer cancel()
-
-	rows, err := tx.QueryContext(ctx, query)
+rows, err := tx.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}

@@ -15,12 +15,17 @@ type Store struct {
 		Insert(context.Context, *Category) error
 		GetAll(context.Context) ([]Category, error)
 	}
+	Dashboard interface {
+		GetTotalIncomeAndExpense() (float64, float64, error)
+		GetMonthlyIncomeAndExpense(year int, month int) (float64, float64, error)
+	}
 }
 
 func NewStore(db *sql.DB) Store {
 	return Store{
 		Transactions: &TransactionStore{db},
 		Categories:   &CategoryStore{db},
+		Dashboard:    &DashboardStore{db},
 	}
 }
 

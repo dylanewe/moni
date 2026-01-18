@@ -27,7 +27,7 @@ func (s *TransactionStore) Insert(ctx context.Context, transactions []Transactio
 		}
 
 		valueStrings := make([]string, 0, len(transactions))
-		valueArgs := make([]any, 0, len(transactions)*5)
+		valueArgs := make([]any, 0, len(transactions)*4)
 
 		for i, t := range transactions {
 			categoryID, exists := categoryMap[t.CategoryName]
@@ -35,18 +35,15 @@ func (s *TransactionStore) Insert(ctx context.Context, transactions []Transactio
 				return fmt.Errorf("category not found: %s", t.CategoryName)
 			}
 
-			valueStrings = append(valueStrings, fmt.Sprintf("($%d, $%d, $%d, $%d, $%d",
-				i*5+1, i*5+2, i*5+3, i*5+4, i*5+5))
-			valueArgs = append(valueArgs, t.ID, t.Description, categoryID, t.Amount, t.Date)
+			valueStrings = append(valueStrings, fmt.Sprintf("($%d, $%d, $%d, $%d)",
+				i*4+1, i*4+2, i*4+3, i*4+4))
+			valueArgs = append(valueArgs, t.Description, categoryID, t.Amount, t.Date)
 		}
 
-		query := fmt.Sprintf("INSERT INTO transactions (id, description, category_id, amount, date) VALUES %s",
+		query := fmt.Sprintf("INSERT INTO transactions (description, category_id, amount, date) VALUES %s",
 			strings.Join(valueStrings, ","))
 
-		ctx, cancel := context.WithTimeout(ctx, 10)
-		defer cancel()
-
-		_, err = s.db.ExecContext(ctx, query, valueArgs...)
+		_, err = tx.ExecContext(ctx, query, valueArgs...)
 		if err != nil {
 			return err
 		}

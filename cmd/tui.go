@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -19,6 +20,13 @@ import (
 const (
 	width       = 96
 	columnWidth = 30
+)
+
+type view int
+
+const (
+	listView view = iota
+	dashboardView
 )
 
 type mode string
@@ -51,6 +59,9 @@ type model struct {
 	spinner             spinner.Model
 	fileStatements      []string
 	fileCursor          int
+	currentView         view
+	dashboard           *tui.DashboardModel
+	keys                tui.KeyMap
 	mode                mode
 	extractedTx         *db.ExtractStatementMsg
 	txCursor            int
@@ -63,6 +74,8 @@ func initModel(cfg *config.Config, service *service.Service) model {
 	s.Spinner = spinner.Dot
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
 
+	keys := tui.DefaultKeyMap()
+
 	return model{
 		spinner:          s,
 		loading:          true,
@@ -73,9 +86,11 @@ func initModel(cfg *config.Config, service *service.Service) model {
 			{name: "Add Statement"},
 			{name: "Add Category"},
 		},
-		cfg:     cfg,
-		service: service,
-		mode:    modeLoading,
+		cfg:         cfg,
+		service:     service,
+		currentView: listView,
+		keys:        keys,
+		mode:        modeLoading,
 	}
 }
 
@@ -88,187 +103,210 @@ func (m model) Init() tea.Cmd {
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
 	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch {
+		case key.Matches(msg, m.keys.Quit):
+			return m, tea.Quit
+		case key.Matches(msg, m.keys.Dashboard):
+			m.currentView = dashboardView
+			return m, nil
+		case key.Matches(msg, m.keys.List):
+			m.currentView = listView
+			return m, nil
+		}
 	case db.DBConnectionMsg:
 		m.stateDescription = ""
 		m.db = &msg
-		if m.db != nil {
-			if m.db.Err != nil {
-				m.stateStatus = tui.StatusBarStateRed
-				m.stateDescription = shortenErr(m.db.Err, 100)
-
-			} else {
-				m.stateStatus = tui.StatusBarStateGreen
-				m.stateDescription = "Connected to database"
-			}
-		}
-		m.loading = false
-		m.mode = modeDefault
-		return m, nil
-
-	case db.ExtractStatementMsg:
-		m.extractedTx = &msg
-		if m.extractedTx != nil {
-			if m.extractedTx.Err != nil {
-				m.stateStatus = tui.StatusBarStateRed
-				m.stateDescription = shortenErr(m.extractedTx.Err, 50)
-				m.mode = modeDefault
-			} else {
-				transactions := m.extractedTx.Transactions
-				for i := range transactions {
-					tx := &transactions[i]
-					if !slices.Contains(m.cfg.Categories, tx.CategoryName) {
-						m.uncategorizedTx = append(m.uncategorizedTx, tx)
-					}
-				}
-
-				if len(m.uncategorizedTx) > 0 {
-					m.uncategorizedCursor = 0
-					m.stateDescription = "Categorize these transactions"
-					m.stateStatus = tui.StatusBarStateBlue
-					m.mode = modeCategorize
-				} else {
-					m.stateDescription = "Confirm to add these transactions?"
-					m.stateStatus = tui.StatusBarStateBlue
-					m.mode = modeSaving
-				}
-
-			}
-		}
-		m.loading = false
-		return m, nil
-
-	case db.AddStatementMsg:
 		if msg.Err != nil {
 			m.stateStatus = tui.StatusBarStateRed
-			m.stateDescription = shortenErr(msg.Err, 50)
+			m.stateDescription = shortenErr(msg.Err, 100)
+
 		} else {
+			m.store = msg.Store
 			m.stateStatus = tui.StatusBarStateGreen
-			m.stateDescription = "Successfully added transactions!"
+			m.stateDescription = "Connected to database"
+			m.dashboard = tui.NewDashboardModel(m.store, m.keys)
+			cmd = m.dashboard.Init()
 		}
 		m.loading = false
 		m.mode = modeDefault
-		return m, nil
+		return m, cmd
+	}
 
-	case tea.KeyMsg:
-
-		switch msg.String() {
-
-		case tea.KeyEnter.String():
-			if m.mode == modeFilePicker {
-				m.stateDescription = "Parsing statement..."
-				m.stateStatus = tui.StatusBarStateYellow
-				filepath := "../statements/" + m.fileStatements[m.fileCursor]
-				m.mode = modeLoading
-				m.loading = true
-				return m, db.ExtractStatement(m.service.LLMParser, m.cfg.Categories, filepath)
-			}
-
-			if m.mode == modeSaving {
-				m.stateDescription = "Saving..."
-				m.stateStatus = tui.StatusBarStateYellow
-				m.mode = modeLoading
-				m.loading = true
-				return m, db.AddStatement(m.store, m.extractedTx.Transactions)
-			}
-
-			if m.mode == modeCategorize {
-				currentTx := m.uncategorizedTx[m.uncategorizedCursor]
-				selectedCategory := m.cfg.Categories[m.txCursor]
-				currentTx.CategoryName = selectedCategory
-				if m.uncategorizedCursor < len(m.uncategorizedTx)-1 {
-					m.uncategorizedCursor++
-					m.txCursor = 0
-				} else {
-					m.stateDescription = "Confirm to add these transactions?"
-					m.stateStatus = tui.StatusBarStateBlue
-					m.mode = modeSaving
-				}
-				return m, nil
-			}
-
-			if m.mode == modeSaving {
-				m.stateDescription = "Saving..."
-				m.stateStatus = tui.StatusBarStateYellow
-				m.mode = modeLoading
-				m.loading = true
-				return m, db.AddStatement(m.store, m.extractedTx.Transactions)
-			}
-
-			if m.cursor == 1 {
-				statements, err := util.ReadFilesFromFolder("../statements/", []string{".pdf"})
-				if err != nil {
-					m.stateDescription = "Error reading statements folder"
+	switch m.currentView {
+	case dashboardView:
+		if m.dashboard != nil {
+			var updatedDashboard tea.Model
+			updatedDashboard, cmd = m.dashboard.Update(msg)
+			m.dashboard = updatedDashboard.(*tui.DashboardModel)
+		}
+	case listView:
+		switch msg := msg.(type) {
+		case db.ExtractStatementMsg:
+			m.extractedTx = &msg
+			if m.extractedTx != nil {
+				if m.extractedTx.Err != nil {
 					m.stateStatus = tui.StatusBarStateRed
-					return m, nil
-				}
-				if len(statements) == 0 {
-					m.stateDescription = "No statements found"
-					m.stateStatus = tui.StatusBarStateYellow
-					return m, nil
-				}
-				m.fileStatements = statements
-				m.stateDescription = "Pick a financial statement to add"
-				m.stateStatus = tui.StatusBarStateBlue
-				m.mode = modeFilePicker
-			}
+					m.stateDescription = shortenErr(m.extractedTx.Err, 50)
+					m.mode = modeDefault
+				} else {
+					transactions := m.extractedTx.Transactions
+					for i := range transactions {
+						tx := &transactions[i]
+						if !slices.Contains(m.cfg.Categories, tx.CategoryName) {
+							m.uncategorizedTx = append(m.uncategorizedTx, tx)
+						}
+					}
 
-		case "ctrl+c", "q":
-			if m.mode == modeFilePicker {
-				m.mode = modeDefault
-				return m, nil
-			}
-			return m, tea.Quit
+					if len(m.uncategorizedTx) > 0 {
+						m.uncategorizedCursor = 0
+						m.stateDescription = "Categorize these transactions"
+						m.stateStatus = tui.StatusBarStateBlue
+						m.mode = modeCategorize
+					} else {
+						m.stateDescription = "Confirm to add these transactions?"
+						m.stateStatus = tui.StatusBarStateBlue
+						m.mode = modeSaving
+					}
 
-		case "up", "k":
-			if m.mode == modeFilePicker {
-				if m.fileCursor > 0 {
-					m.fileCursor--
 				}
-			} else if m.mode == modeCategorize {
-				if m.txCursor > 0 {
-					m.txCursor--
-				}
+			}
+			m.loading = false
+			return m, nil
+
+		case db.AddStatementMsg:
+			if msg.Err != nil {
+				m.stateStatus = tui.StatusBarStateRed
+				m.stateDescription = shortenErr(msg.Err, 50)
 			} else {
-				if m.cursor > 0 {
-					if m.commands[m.cursor-1].disabled {
+				m.stateStatus = tui.StatusBarStateGreen
+				m.stateDescription = "Successfully added transactions!"
+			}
+			m.loading = false
+			m.mode = modeDefault
+			return m, nil
+
+		case tea.KeyMsg:
+			switch msg.String() {
+			case tea.KeyEnter.String():
+				if m.mode == modeFilePicker {
+					m.stateDescription = "Parsing statement..."
+					m.stateStatus = tui.StatusBarStateYellow
+					filepath := "../statements/" + m.fileStatements[m.fileCursor]
+					m.mode = modeLoading
+					m.loading = true
+					return m, db.ExtractStatement(m.service.LLMParser, m.cfg.Categories, filepath)
+				}
+
+				if m.mode == modeSaving {
+					m.stateDescription = "Saving..."
+					m.stateStatus = tui.StatusBarStateYellow
+					m.mode = modeLoading
+					m.loading = true
+					return m, db.AddStatement(m.store, m.extractedTx.Transactions)
+				}
+
+				if m.mode == modeCategorize {
+					currentTx := m.uncategorizedTx[m.uncategorizedCursor]
+					selectedCategory := m.cfg.Categories[m.txCursor]
+					currentTx.CategoryName = selectedCategory
+					if m.uncategorizedCursor < len(m.uncategorizedTx)-1 {
+						m.uncategorizedCursor++
+						m.txCursor = 0
+					} else {
+						m.stateDescription = "Confirm to add these transactions?"
+						m.stateStatus = tui.StatusBarStateBlue
+						m.mode = modeSaving
+					}
+					return m, nil
+				}
+
+				if m.mode == modeSaving {
+					m.stateDescription = "Saving..."
+					m.stateStatus = tui.StatusBarStateYellow
+					m.mode = modeLoading
+					m.loading = true
+					return m, db.AddStatement(m.store, m.extractedTx.Transactions)
+				}
+
+				if m.cursor == 1 {
+					statements, err := util.ReadFilesFromFolder("../statements/", []string{".pdf"})
+					if err != nil {
+						m.stateDescription = "Error reading statements folder"
+						m.stateStatus = tui.StatusBarStateRed
+						return m, nil
+					}
+					if len(statements) == 0 {
+						m.stateDescription = "No statements found"
+						m.stateStatus = tui.StatusBarStateYellow
+						return m, nil
+					}
+					m.fileStatements = statements
+					m.stateDescription = "Pick a financial statement to add"
+					m.stateStatus = tui.StatusBarStateBlue
+					m.mode = modeFilePicker
+				}
+
+			case "ctrl+c", "q":
+				if m.mode == modeFilePicker {
+					m.mode = modeDefault
+					return m, nil
+				}
+				return m, tea.Quit
+
+			case "up", "k":
+				if m.mode == modeFilePicker {
+					if m.fileCursor > 0 {
+						m.fileCursor--
+					}
+				} else if m.mode == modeCategorize {
+					if m.txCursor > 0 {
+						m.txCursor--
+					}
+				} else {
+					if m.cursor > 0 {
+						if m.commands[m.cursor-1].disabled {
+							m.cursor--
+						}
 						m.cursor--
 					}
-					m.cursor--
 				}
-			}
 
-		case "down", "j":
-			if m.mode == modeFilePicker {
-				if m.fileCursor < len(m.fileStatements)-1 {
-					m.fileCursor++
-				}
-			} else if m.mode == modeCategorize {
-				if m.txCursor < len(m.cfg.Categories) {
-					m.txCursor++
-				}
-			} else {
-				if m.cursor < len(m.commands)-1 {
-					if m.commands[m.cursor+1].disabled {
+			case "down", "j":
+				if m.mode == modeFilePicker {
+					if m.fileCursor < len(m.fileStatements)-1 {
+						m.fileCursor++
+					}
+				} else if m.mode == modeCategorize {
+					if m.txCursor < len(m.cfg.Categories)-1 {
+						m.txCursor++
+					}
+				} else {
+					if m.cursor < len(m.commands)-1 {
+						if m.commands[m.cursor+1].disabled {
+							m.cursor++
+						}
 						m.cursor++
 					}
-					m.cursor++
 				}
-			}
 
-		case "y":
-			if m.mode == modeSaving {
-				m.stateDescription = "Saving..."
-				m.stateStatus = tui.StatusBarStateYellow
-				m.mode = modeLoading
-				m.loading = true
-				return m, db.AddStatement(m.store, m.extractedTx.Transactions)
+			case "y":
+				if m.mode == modeSaving {
+					m.stateDescription = "Saving..."
+					m.stateStatus = tui.StatusBarStateYellow
+					m.mode = modeLoading
+					m.loading = true
+					return m, db.AddStatement(m.store, m.extractedTx.Transactions)
+				}
 			}
 		}
 	}
 
-	var cmd tea.Cmd
-	m.spinner, cmd = m.spinner.Update(msg)
+	var spinnerCmd tea.Cmd
+	m.spinner, spinnerCmd = m.spinner.Update(msg)
+	cmd = tea.Batch(cmd, spinnerCmd)
 
 	return m, cmd
 }
@@ -282,12 +320,20 @@ func (m model) View() string {
 	var stateDescription string
 	if !m.loading {
 		stateDescription = m.stateDescription
-		renderLists(doc, m)
+		switch m.currentView {
+		case dashboardView:
+			if m.dashboard != nil {
+				doc.WriteString(m.dashboard.View())
+			}
+		case listView:
+			renderLists(doc, m)
+		}
 	} else {
 		stateDescription = m.spinner.View()
 	}
 
-	doc.WriteString("[q] Quit		[Enter] Select")
+	doc.WriteString("\n\n")
+	doc.WriteString("[q] Quit [d] Dashboard [v] List")
 	doc.WriteString("\n\n")
 
 	tui.RenderStatusBar(doc, tui.NewStatusBarProps(&tui.StatusBarProps{
